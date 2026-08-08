@@ -2,6 +2,7 @@ import os
 import json
 from dotenv import load_dotenv
 import httpx
+import logging
 from fastapi import FastAPI, Depends, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
@@ -17,6 +18,8 @@ from app.schemas import UserCreate, EventCreate, EventResponse
 from app.auth import get_password_hash, verify_password, create_access_token, get_current_user
 
 load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Planner API")
 
@@ -67,11 +70,13 @@ class AIPrompt(BaseModel):
 
 @app.post("/api/ai/parse")
 async def parse_text_with_ai(prompt: AIPrompt, current_user: User = Depends(get_current_user)):
-    api_key = os.getenv("GEMINI_API_KEY")
-    if not api_key:
-        raise HTTPException(status_code=500, detail="API ключ не настроен на сервере")
+    keys_env = os.getenv("GEMINI_API_KEYS")
+    if not keys_env:
+        logger.error("КРИТИЧЕСКАЯ ОШИБКА: Переменная GEMINI_API_KEYS не найдена в .env")
+        raise HTTPException(status_code=500, detail="API ключи не настроены на сервере")
 
-    api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+    # Разбиваем строку на список ключей, убирая пробелы
+    api_keys = [k.strip() for k in keys_env.split(",") if k.strip()]
     
     system_prompt = f"""Ты ИИ-ассистент ежедневника. Текущая дата: {prompt.current_date}.
     Проанализируй текст и верни массив JSON объектов. Формат объекта:
@@ -87,22 +92,49 @@ async def parse_text_with_ai(prompt: AIPrompt, current_user: User = Depends(get_
     }}
     ВЕРНИ ТОЛЬКО СЫРОЙ МАССИВ JSON, БЕЗ МАРКДАУНА. Текст: "{prompt.text}"
     """
-
+    
     async with httpx.AsyncClient() as client:
-        try:
-            response = await client.post(
-                api_url,
-                json={"contents": [{"parts": [{"text": system_prompt}]}]},
-                timeout=15.0
-            )
-            response.raise_for_status()
-            result = response.json()
-            text_response = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "[]")
+        # Перебираем ключи по очереди
+        for index, api_key in enumerate(api_keys):
+            masked_key = f"...{api_key[-4:]}" if len(api_key) > 4 else "INVALID"
+            logger.info(f"--- ИИ Запрос: Пробуем ключ {index + 1} из {len(api_keys)} ({masked_key}) ---")
             
-            clean_json = text_response.replace("```json\n", "").replace("```", "").strip()
-            return json.loads(clean_json)
-        except Exception as e:
-            raise HTTPException(status_code=500, detail=f"Ошибка обработки ИИ: {str(e)}")
+            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={api_key}"
+            
+            try:
+                response = await client.post(
+                    api_url,
+                    json={"contents": [{"parts": [{"text": system_prompt}]}]},
+                    timeout=15.0
+                )
+                
+                # Если Google вернул ошибку (например 400 или 403), логируем её и идем к следующему ключу
+                if response.status_code != 200:
+                    logger.error(f"Ошибка от Google (ключ {masked_key}). Статус: {response.status_code}. Ответ: {response.text}")
+                    continue 
+                    
+                result = response.json()
+                text_response = result.get("candidates", [{}])[0].get("content", {}).get("parts", [{}])[0].get("text", "[]")
+                
+                clean_json = text_response.replace("```json\n", "").replace("```", "").strip()
+                parsed_data = json.loads(clean_json)
+                
+                logger.info(f"Успешный ответ от ИИ с ключом {masked_key}")
+                return parsed_data
+                
+            except httpx.RequestError as e:
+                logger.error(f"Сетевая ошибка при запросе к Google (ключ {masked_key}): {str(e)}")
+                continue
+            except json.JSONDecodeError as e:
+                logger.error(f"Ошибка парсинга JSON от Google. ИИ вернул неверный формат: {text_response}")
+                continue
+            except Exception as e:
+                logger.error(f"Непредвиденная ошибка (ключ {masked_key}): {str(e)}")
+                continue
+                
+    # Если цикл завершился, значит ни один из ключей не сработал
+    logger.error("Все доступные ключи API были перебраны, но запрос не удался.")
+    raise HTTPException(status_code=500, detail="Сбой ИИ-ассистента. Подробности в логах сервера.")
 
 # --- СОБЫТИЯ (EVENTS) ---
 @app.post("/events/", response_model=List[EventResponse])
