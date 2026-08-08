@@ -7,7 +7,7 @@ from fastapi import FastAPI, Depends, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.future import select
 from typing import List
-from datetime import timedelta
+from datetime import timedelta, datetime
 from fastapi.security import OAuth2PasswordRequestForm
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
@@ -75,22 +75,32 @@ async def parse_text_with_ai(prompt: AIPrompt, current_user: User = Depends(get_
         logger.error("КРИТИЧЕСКАЯ ОШИБКА: Переменная GEMINI_API_KEYS не найдена в .env")
         raise HTTPException(status_code=500, detail="API ключи не настроены на сервере")
 
-    # Разбиваем строку на список ключей, убирая пробелы
     api_keys = [k.strip() for k in keys_env.split(",") if k.strip()]
     
-    system_prompt = f"""Ты ИИ-ассистент ежедневника. Текущая дата: {prompt.current_date}.
+    # Вычисляем день недели для ИИ, чтобы он понимал относительные даты ("до среды")
+    days_ru = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+    try:
+        dt = datetime.strptime(prompt.current_date, "%Y-%m-%d")
+        day_of_week = days_ru[dt.weekday()]
+        date_str = f"{prompt.current_date} ({day_of_week})"
+    except:
+        date_str = prompt.current_date
+    
+    system_prompt = f"""Ты профессиональный ИИ-ассистент ежедневника. 
+    Сегодняшняя дата: {date_str}.
     Проанализируй текст и верни массив JSON объектов.
     
     РАЗДЕЛЕНИЕ НА ЗАДАЧИ И СОБЫТИЯ:
-    - Если это встреча, созвон, тренировка (имеет начало и конец) -> "type": "event".
-    - Если это задача (нужно сделать ДО какого-то времени или просто в течение дня) -> "type": "task".
+    - Встреча, созвон, смена на работе (имеет начало и конец) -> "type": "event".
+    - Задача (нужно сделать ДО какого-то времени/дня или просто в течение дня) -> "type": "task".
     
-    ДЕДЛАЙНЫ ЗАДАЧ ("type": "task"):
-    - Задача на весь день (например, "купить молоко завтра") -> "isAllDay": true, "startTime": null.
-    - У задачи есть точный дедлайн (например, "сдать отчет до 15:00") -> "isAllDay": false, "startTime": "15:00".
+    ДАТЫ И ДЕДЛАЙНЫ (ОЧЕНЬ ВАЖНО):
+    - Внимательно высчитывай даты (завтра, послезавтра, до среды, в четверг), отталкиваясь от сегодняшнего дня ({date_str}).
+    - Задача на весь день или до определенного дня (без точного времени) -> "isAllDay": true, "startTime": null.
+    - Задача с точным временем дедлайна (до 15:00) -> "isAllDay": false, "startTime": "15:00".
     
     ЗАМЕТКИ:
-    - Детали, списки или пояснения обязательно помещай в "comments".
+    - Зарплата, списки покупок, ссылки и любые другие детали ОБЯЗАТЕЛЬНО помещай в "comments".
     
     Формат объекта:
     {{
@@ -108,7 +118,6 @@ async def parse_text_with_ai(prompt: AIPrompt, current_user: User = Depends(get_
     """
     
     async with httpx.AsyncClient() as client:
-        # Перебираем ключи по очереди
         for index, api_key in enumerate(api_keys):
             masked_key = f"...{api_key[-4:]}" if len(api_key) > 4 else "INVALID"
             logger.info(f"--- ИИ Запрос: Пробуем ключ {index + 1} из {len(api_keys)} ({masked_key}) ---")
@@ -121,7 +130,6 @@ async def parse_text_with_ai(prompt: AIPrompt, current_user: User = Depends(get_
                     timeout=15.0
                 )
                 
-                # Если Google вернул ошибку (например 400 или 403), логируем её и идем к следующему ключу
                 if response.status_code != 200:
                     logger.error(f"Ошибка от Google (ключ {masked_key}). Статус: {response.status_code}. Ответ: {response.text}")
                     continue 
@@ -145,9 +153,9 @@ async def parse_text_with_ai(prompt: AIPrompt, current_user: User = Depends(get_
                 logger.error(f"Непредвиденная ошибка (ключ {masked_key}): {str(e)}")
                 continue
                 
-    # Если цикл завершился, значит ни один из ключей не сработал
     logger.error("Все доступные ключи API были перебраны, но запрос не удался.")
     raise HTTPException(status_code=500, detail="Сбой ИИ-ассистента. Подробности в логах сервера.")
+
 
 # --- СОБЫТИЯ (EVENTS) ---
 @app.post("/events/", response_model=List[EventResponse])

@@ -31,6 +31,7 @@ interface AppEvent {
   isCompleted: boolean;
   repeat: string;
   type: string; // "event" | "task"
+  isDeadline?: boolean;
   col?: number;
   numColumns?: number;
 }
@@ -101,7 +102,9 @@ const mapFromDB = (dbItem: any): AppEvent => ({
   subtasks: dbItem.subtasks || [],
   isCompleted: dbItem.is_completed,
   repeat: dbItem.repeat || 'none',
-  type: dbItem.item_type || 'event'
+  // Если из базы пришел deadline, для React это задача с галочкой isDeadline
+  type: (dbItem.item_type === 'deadline' || dbItem.item_type === 'task') ? 'task' : 'event',
+  isDeadline: dbItem.item_type === 'deadline'
 });
 
 const mapToDB = (item: any, type: string) => ({
@@ -115,7 +118,8 @@ const mapToDB = (item: any, type: string) => ({
   comments: item.comments,
   subtasks: item.subtasks,
   repeat: item.repeat || 'none',
-  item_type: type,
+  // Если сохраняем задачу с дедлайном, отправляем тип deadline
+  item_type: (type === 'task' && item.isDeadline) ? 'deadline' : type,
   is_completed: item.isCompleted || false
 });
 
@@ -158,6 +162,7 @@ export default function App() {
 
   const [currentDate, setCurrentDate] = useState<string>(REAL_TODAY);
   const [activeTab, setActiveTab] = useState<'today' | 'calendar' | 'tasks' | 'profile'>('today');
+  const [isAllDayExpanded, setIsAllDayExpanded] = useState<boolean>(false);
   
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [tasks, setTasks] = useState<AppEvent[]>([]); // Tasks and Events share the same DB format now
@@ -206,7 +211,7 @@ export default function App() {
   const [formData, setFormData] = useState({
     title: '', isAllDay: false, startDate: REAL_TODAY, endDate: REAL_TODAY, 
     startTime: '09:00', endTime: '10:00', repeat: 'none', color: '#FF9A8B', 
-    comments: '', subtasks: [] as Subtask[]
+    comments: '', subtasks: [] as Subtask[], isDeadline: false
   });
 
   const [aiModalOpen, setAiModalOpen] = useState<boolean>(false);
@@ -404,13 +409,15 @@ export default function App() {
         setFormData({
           title: obj.title || '', isAllDay: obj.isAllDay, startDate: obj.startDate || currentDate, endDate: obj.endDate || currentDate,
           startTime: obj.startTime || '09:00', endTime: obj.endTime || '10:00', repeat: obj.repeat || 'none', color: obj.color || '#FF9A8B',
-          comments: obj.comments || '', subtasks: obj.subtasks || []
+          comments: obj.comments || '', subtasks: obj.subtasks || [], 
+          isDeadline: obj.isDeadline || false // <-- ПОДТЯГИВАЕМ ИЗ БАЗЫ
         });
       }
     } else {
       setFormData({
-        title: '', isAllDay: false, startDate: currentDate, endDate: currentDate,
-        startTime: '09:00', endTime: '10:00', repeat: 'none', color: '#FF9A8B', comments: '', subtasks: []
+        title: '', isAllDay: type === 'task', startDate: currentDate, endDate: currentDate,
+        startTime: '09:00', endTime: '10:00', repeat: 'none', color: '#FF9A8B', comments: '', subtasks: [],
+        isDeadline: false
       });
     }
     setSheetState({ isOpen: true, id, type });
@@ -523,7 +530,8 @@ export default function App() {
 
         const payload = mapToDB({
            title: item.title, isAllDay: item.isAllDay || false, startDate: item.startDate, endDate: item.endDate || item.startDate,
-           startTime: start, endTime: end, color: item.color || '#FF9A8B', comments: item.comments || '', subtasks: [], isCompleted: false, repeat: 'none'
+           startTime: start, endTime: end, color: item.color || '#FF9A8B', comments: item.comments || '', subtasks: [], isCompleted: false, repeat: 'none',
+           isDeadline: item.type === 'task' && !item.isAllDay // ИИ автоматически делает задачу дедлайном, если нашел точное время
         }, item.type);
 
         const res = await fetch(`${API_URL}/events/`, { method: 'POST', headers, body: JSON.stringify(payload) });
@@ -581,20 +589,41 @@ export default function App() {
       
       {/* ЗАКРЕПЛЕННЫЙ БЛОК СВЕРХУ (Задачи на день) */}
       {allDayItems.length > 0 && (
-        <div className="w-full flex flex-col space-y-2 px-6 md:px-10 pt-2 pb-4 bg-[#FFF5F3]/90 dark:bg-zinc-950/90 backdrop-blur-xl z-40 border-b border-black/5 dark:border-white/5 flex-shrink-0">
-          {allDayItems.map(item => (
+        <div className="w-full flex flex-col space-y-2 px-6 md:px-10 pt-4 pb-2 bg-transparent z-40 flex-shrink-0">
+          
+          {/* Показываем либо все элементы (если раскрыто), либо только первые 2 */}
+          {(isAllDayExpanded ? allDayItems : allDayItems.slice(0, 1)).map(item => (
             <div key={item.id} onClick={() => openSheet(item.id, item.type as 'event' | 'task')}
-                 className={`bg-white/90 dark:bg-zinc-800/90 backdrop-blur-md rounded-xl shadow-sm border border-white/40 dark:border-zinc-700 p-3 flex items-center justify-between cursor-pointer border-l-4 transition-all hover:shadow-md ${item.isCompleted ? 'opacity-60' : ''}`}
-                 style={{ borderLeftColor: item.color }}>
-              <div className="flex items-center space-x-3 w-full">
+                 className={`bg-white dark:bg-[#1C1C1E] rounded-2xl shadow-sm border border-black/5 dark:border-white/5 p-3.5 flex items-center justify-between cursor-pointer transition-all hover:scale-[1.02] hover:shadow-md ${item.isCompleted ? 'opacity-50' : ''}`}>
+              <div className="flex items-center space-x-4 w-full">
                 <div onClick={(e) => { e.stopPropagation(); toggleTaskCompletion(item.id, item.type as 'event' | 'task'); }}
-                     className={`w-5 h-5 min-w-[20px] rounded-full border-2 flex items-center justify-center transition-colors ${item.isCompleted ? 'bg-primary border-primary' : 'border-textMuted'}`}>
-                  <Check className={`w-3.5 h-3.5 text-white transition-opacity ${item.isCompleted ? 'opacity-100' : 'opacity-0'}`} />
+                     className={`w-6 h-6 min-w-[24px] rounded-full border-2 flex items-center justify-center transition-colors ${item.isCompleted ? 'bg-primary border-primary' : 'border-textMuted'}`}>
+                  <Check className={`w-4 h-4 text-white transition-opacity ${item.isCompleted ? 'opacity-100' : 'opacity-0'}`} />
                 </div>
-                <AnimatedStrikethrough text={item.title} isCompleted={item.isCompleted} className="font-bold text-[15px]" />
+                <div className="flex flex-col flex-1 overflow-hidden">
+                  <AnimatedStrikethrough text={item.title} isCompleted={item.isCompleted} className="font-bold text-[16px] leading-tight truncate block text-textMain" />
+                  <span className="text-[11px] font-bold mt-1 tracking-wide" style={{ color: item.color }}>
+                     {item.type === 'task' ? 'ЗАДАЧА НА ДЕНЬ' : 'ВЕСЬ ДЕНЬ'}
+                  </span>
+                </div>
               </div>
             </div>
           ))}
+
+          {/* Кнопка "Скрыть / Ещё X задачи" появляется только если элементов больше 2 */}
+          {allDayItems.length > 1 && (
+            <button 
+              onClick={() => setIsAllDayExpanded(!isAllDayExpanded)}
+              className="w-full py-2.5 mt-1 bg-black/5 dark:bg-white/5 rounded-xl text-[12px] font-bold text-textMuted hover:bg-black/10 dark:hover:bg-white/10 hover:text-textMain transition-colors flex items-center justify-center"
+            >
+              {isAllDayExpanded ? (
+                <><ChevronDown className="w-4 h-4 mr-1 rotate-180"/> Скрыть</>
+              ) : (
+                <><ChevronDown className="w-4 h-4 mr-1"/> Ещё {allDayItems.length - 1}</>
+              )}
+            </button>
+          )}
+          
         </div>
       )}
 
@@ -674,10 +703,8 @@ export default function App() {
                       <div className="flex items-center space-x-2 mt-2">
                         <span className="text-[11px] font-semibold bg-black/5 dark:bg-white/5 text-textMuted px-2 py-1 rounded-md flex items-center">
                           <CalendarIcon className="w-3 h-3 mr-1.5" style={{ color: task.color }}/> 
-                          {task.isAllDay 
-                            ? formatPillDate(task.startDate) 
-                            : `До ${formatPillDate(task.startDate)} ${task.startTime && task.startTime !== '00:00' ? task.startTime : ''}`
-                          }
+                          {task.isDeadline ? 'До ' : ''}{formatPillDate(task.startDate)} 
+                          {!task.isAllDay && task.startTime && task.startTime !== '00:00' ? ` ${task.startTime}` : ''}
                         </span>
                         {task.subtasks.length > 0 && <span className="text-[11px] font-bold text-primary bg-primary/10 px-2 py-1 rounded-md">{completedSubs}/{task.subtasks.length}</span>}
                       </div>
@@ -898,9 +925,9 @@ export default function App() {
       
       <div className={`fixed bottom-0 md:top-0 md:right-0 md:bottom-auto w-full md:w-[450px] bg-white dark:bg-zinc-900 rounded-t-[40px] md:rounded-t-none md:rounded-l-[40px] shadow-[0_-20px_40px_rgba(0,0,0,0.15)] md:shadow-[-20px_0_40px_rgba(0,0,0,0.15)] z-50 flex flex-col transition-transform duration-500 ease-[cubic-bezier(0.32,0.72,0,1)] 
         ${(appStage === 'app' && sheetState.isOpen) ? 'translate-y-0 md:translate-x-0' : 'translate-y-full md:translate-y-0 md:translate-x-full'}`} 
-        style={{ height: '100dvh' }}>
+        style={{ height: window.innerWidth >= 768 ? '100dvh' : '88dvh' }}>
         
-        <div className="w-full flex justify-center pt-[calc(env(safe-area-inset-top,48px)+16px)] pb-4 md:hidden cursor-pointer flex-shrink-0" onClick={closeSheet}>
+        <div className="w-full flex justify-center pt-5 pb-4 md:hidden cursor-pointer flex-shrink-0" onClick={closeSheet}>
           <div className="w-12 h-1.5 bg-black/10 dark:bg-white/10 rounded-full"></div>
         </div>
         
@@ -973,6 +1000,13 @@ export default function App() {
               </>
             ) : (
               <>
+                <div className="flex justify-between items-center px-5 py-4 bg-transparent cursor-pointer border-b border-black/5 dark:border-white/5" onClick={() => setFormData({...formData, isDeadline: !formData.isDeadline})}>
+                  <div className="flex items-center space-x-3 text-textMain"><CalendarDays className="w-5 h-5 text-primary"/><span className="font-bold">Дедлайн</span></div>
+                  <div className={`w-12 h-7 rounded-full p-1 transition-colors ${formData.isDeadline ? 'bg-primary' : 'bg-black/10 dark:bg-white/10'}`}>
+                    <div className={`w-5 h-5 bg-white rounded-full shadow-md transition-transform ${formData.isDeadline ? 'translate-x-5' : ''}`}></div>
+                  </div>
+                </div>
+
                 <div className="flex justify-between items-center px-5 py-4 bg-transparent cursor-pointer border-b border-black/5 dark:border-white/5" onClick={() => setFormData({...formData, isAllDay: !formData.isAllDay})}>
                   <div className="flex items-center space-x-3 text-textMain"><Clock className="w-5 h-5 text-primary"/><span className="font-bold">Точное время</span></div>
                   <div className={`w-12 h-7 rounded-full p-1 transition-colors ${!formData.isAllDay ? 'bg-primary' : 'bg-black/10 dark:bg-white/10'}`}>
@@ -981,7 +1015,7 @@ export default function App() {
                 </div>
                 
                 <div className="flex justify-between items-center px-5 py-3 bg-transparent">
-                  <span className="font-bold text-textMain">Дедлайн</span>
+                  <span className="font-bold text-textMain">{formData.isDeadline ? 'До какого' : 'Дата'}</span>
                   <div className="flex space-x-2 items-center">
                      <IOSPickerPill type="date" value={formData.startDate} onChange={(val: string) => setFormData({...formData, startDate: val})} />
                      {!formData.isAllDay && <IOSPickerPill type="time" value={formData.startTime} onChange={(val: string) => setFormData({...formData, startTime: val})} />}
