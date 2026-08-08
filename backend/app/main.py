@@ -1,5 +1,6 @@
 import os
 import json
+from dotenv import load_dotenv
 import httpx
 from fastapi import FastAPI, Depends, HTTPException, status, Response
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -15,11 +16,17 @@ from app.models import User, Event
 from app.schemas import UserCreate, EventCreate, EventResponse
 from app.auth import get_password_hash, verify_password, create_access_token, get_current_user
 
+load_dotenv()
+
 app = FastAPI(title="Planner API")
+
+# Читаем список разрешенных доменов из .env, по умолчанию разрешаем всё (для локальной разработки)
+origins_str = os.getenv("ALLOWED_ORIGINS", "*")
+origins = [origin.strip() for origin in origins_str.split(",")]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"], # В будущем заменить на URL фронтенда
+    allow_origins=origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

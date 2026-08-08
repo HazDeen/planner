@@ -8,7 +8,7 @@ import {
 import toast, { Toaster } from 'react-hot-toast';
 
 // --- НАСТРОЙКИ API ---
-const API_URL = 'http://127.0.0.1:8000'; // ЗАМЕНИ НА СВОЙ IP ДЛЯ ДОСТУПА С ТЕЛЕФОНА (например, http://2.26.52.22:8000)
+const API_URL = import.meta.env.VITE_API_URL || '';
 
 // --- ТИПИЗАЦИЯ ---
 interface Subtask {
@@ -167,8 +167,14 @@ export default function App() {
   const [aiModalOpen, setAiModalOpen] = useState<boolean>(false);
   const [aiText, setAiText] = useState<string>('');
   const [isListening, setIsListening] = useState<boolean>(false);
+
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [parsedItems, setParsedItems] = useState<ParsedAiItem[] | null>(null); 
+  
+  const [currentTimePixels, setCurrentTimePixels] = useState<number>(() => {
+    const now = new Date();
+    return now.getHours() * 60 + now.getMinutes();
+  });
 
   const timelineRef = useRef<HTMLDivElement>(null);
 
@@ -184,6 +190,17 @@ export default function App() {
         localStorage.removeItem('token');
       }
     }
+  }, []);
+
+  useEffect(() => {
+    // Таймер обновляет позицию линии каждую минуту (60000 мс)
+    const interval = setInterval(() => {
+      const now = new Date();
+      setCurrentTimePixels(now.getHours() * 60 + now.getMinutes());
+    }, 60000);
+
+    // Очищаем таймер, если компонент будет размонтирован
+    return () => clearInterval(interval);
   }, []);
 
   // Fetch Data on Loading Stage
@@ -536,10 +553,10 @@ export default function App() {
           {Array.from({length: 25}).map((_, i) => (
             <div key={i} className="absolute w-full border-t border-black/5 dark:border-white/5" style={{ top: `${i * 60}px` }}></div>
           ))}
-          <div className="absolute w-full flex items-center z-20 pointer-events-none" style={{ top: `${21 * 60}px` }}>
-             <div className="w-full border-t-[2px] border-primary border-dashed relative">
+          <div className="absolute w-full flex items-center z-20 pointer-events-none" style={{ top: `${currentTimePixels}px` }}>
+            <div className="w-full border-t-[2px] border-primary border-dashed relative">
                 <div className="absolute w-2.5 h-2.5 bg-primary rounded-full -left-1.5 -top-[5.5px] shadow-[0_0_12px_rgba(255,154,139,0.9)] animate-pulse"></div>
-             </div>
+            </div>
           </div>
           {timedEvents.map(evt => {
             const topPx = timeToPixels(evt.startTime);
