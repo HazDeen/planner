@@ -45,6 +45,7 @@ interface ParsedAiItem {
   startTime: string | null;
   endTime: string | null;
   color: string;
+  comments: string;
 }
 
 declare global {
@@ -64,6 +65,14 @@ const timeToPixels = (timeString: string | null): number => {
   const parts = timeString.split(':');
   if (parts.length < 2) return 0;
   return (parseInt(parts[0], 10) * 60) + parseInt(parts[1], 10);
+};
+
+// ДОБАВИТЬ ЭТУ ФУНКЦИЮ:
+const addOneHour = (timeStr: string) => {
+  if (!timeStr) return '10:00';
+  const [h, m] = timeStr.split(':').map(Number);
+  const newH = (h + 1) % 24;
+  return `${String(newH).padStart(2, '0')}:${String(m).padStart(2, '0')}`;
 };
 
 const addDays = (dateStr: string, days: number): string => {
@@ -153,7 +162,43 @@ export default function App() {
   const [events, setEvents] = useState<AppEvent[]>([]);
   const [tasks, setTasks] = useState<AppEvent[]>([]); // Tasks and Events share the same DB format now
   
-  const [isDark, setIsDark] = useState<boolean>(false);
+  // Проверяем сохраненную тему при первой загрузке
+  const [isDark, setIsDark] = useState<boolean>(() => {
+    return localStorage.getItem('theme') === 'dark';
+  });
+
+  // Сохраняем новую тему в память браузера при переключении
+  const toggleDark = () => {
+    setIsDark(prev => {
+      const newTheme = !prev;
+      localStorage.setItem('theme', newTheme ? 'dark' : 'light');
+      return newTheme;
+    });
+  };
+
+  useEffect(() => {
+    // 1. Ищем или создаем мета-тег theme-color
+    let metaThemeColor = document.querySelector('meta[name="theme-color"]:not([media])');
+    if (!metaThemeColor) {
+      metaThemeColor = document.createElement('meta');
+      metaThemeColor.setAttribute('name', 'theme-color');
+      document.head.appendChild(metaThemeColor);
+    }
+    
+    // 2. Удаляем старые теги из index.html, которые реагировали на систему телефона
+    document.querySelectorAll('meta[name="theme-color"][media]').forEach(el => el.remove());
+
+    // 3. Красим шторку в зависимости от нашей переменной
+    const bgColor = isDark ? '#09090B' : '#FFF5F3';
+    metaThemeColor.setAttribute('content', bgColor);
+    
+    // 4. Заодно красим сам `body`. Это нужно для того, чтобы при 
+    // скролле (когда тянешь экран вниз до "резинового" отскока) 
+    // фон за пределами приложения не оставался белым.
+    document.body.style.backgroundColor = bgColor;
+  }, [isDark]);
+  // --- КОНЕЦ ДОБАВЛЕННОГО БЛОКА ---
+
   const [expandedTasks, setExpandedTasks] = useState<Record<string, boolean>>({});
   const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date(REAL_TODAY));
   
@@ -170,6 +215,7 @@ export default function App() {
 
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [parsedItems, setParsedItems] = useState<ParsedAiItem[] | null>(null); 
+  const [expandedAiItemId, setExpandedAiItemId] = useState<number | null>(null); // <-- ДОБАВИЛИ ЭТУ СТРОКУ
   
   const [currentTimePixels, setCurrentTimePixels] = useState<number>(() => {
     const now = new Date();
@@ -240,8 +286,6 @@ export default function App() {
       timelineRef.current.scrollTop = 8 * 60;
     }
   }, [activeTab, currentDate, appStage]);
-
-  const toggleDark = () => setIsDark(!isDark);
 
   const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -473,9 +517,13 @@ export default function App() {
 
     try {
       for (const item of parsedItems) {
+        // Умный расчет времени для ИИ
+        const start = item.startTime || '09:00';
+        const end = item.endTime || addOneHour(start);
+
         const payload = mapToDB({
            title: item.title, isAllDay: item.isAllDay || false, startDate: item.startDate, endDate: item.endDate || item.startDate,
-           startTime: item.startTime || '09:00', endTime: item.endTime || '10:00', color: item.color || '#FF9A8B', comments: '', subtasks: [], isCompleted: false, repeat: 'none'
+           startTime: start, endTime: end, color: item.color || '#FF9A8B', comments: item.comments || '', subtasks: [], isCompleted: false, repeat: 'none'
         }, item.type);
 
         const res = await fetch(`${API_URL}/events/`, { method: 'POST', headers, body: JSON.stringify(payload) });
@@ -884,7 +932,14 @@ export default function App() {
                   <span className="font-bold text-textMain">Начало</span>
                   <div className="flex space-x-2 items-center">
                     <IOSPickerPill type="date" value={formData.startDate} onChange={(val: string) => setFormData({...formData, startDate: val})} />
-                    {!formData.isAllDay && <IOSPickerPill type="time" value={formData.startTime} onChange={(val: string) => setFormData({...formData, startTime: val})} />}
+                    {!formData.isAllDay && <IOSPickerPill type="time" value={formData.startTime} onChange={(val: string) => {
+                        let newEndTime = formData.endTime;
+                        // Если "Начало" стало больше или равно "Концу", сдвигаем конец на час вперед
+                        if (timeToPixels(val) >= timeToPixels(formData.endTime)) {
+                            newEndTime = addOneHour(val);
+                        }
+                        setFormData({...formData, startTime: val, endTime: newEndTime});
+                    }} />}
                   </div>
                 </div>
 
@@ -982,21 +1037,80 @@ export default function App() {
                </button>
              </>
            ) : (
-             <div className="flex flex-col max-h-[500px]">
+             <div className="flex flex-col max-h-[600px]">
                <p className="text-sm font-bold text-primary mb-3">Распознано {parsedItems.length} задач(и):</p>
-               <div className="overflow-y-auto space-y-3 mb-4 flex-1 custom-scrollbar">
-                  {parsedItems.map((item, i) => (
-                    <div key={item._tempId} className="bg-black/5 dark:bg-white/5 p-3 rounded-xl border-l-4 border-primary">
-                      <input value={item.title} onChange={e => { const newItems = [...parsedItems]; newItems[i].title = e.target.value; setParsedItems(newItems); }} className="font-bold text-sm text-textMain bg-transparent w-full outline-none mb-1"/>
-                      <div className="flex items-center space-x-2 mt-1">
-                         <IOSPickerPill type="date" value={item.startDate} onChange={(val: string) => { const newItems = [...parsedItems]; newItems[i].startDate = val; setParsedItems(newItems); }} />
-                         {item.type === 'event' && !item.isAllDay && <IOSPickerPill type="time" value={item.startTime || ''} onChange={(val: string) => { const newItems = [...parsedItems]; newItems[i].startTime = val; setParsedItems(newItems); }} />}
+               
+               <div className="overflow-y-auto space-y-3 mb-4 flex-1 custom-scrollbar px-1 pb-2">
+                  {parsedItems.map((item, i) => {
+                    const isExp = expandedAiItemId === item._tempId;
+                    
+                    return (
+                      <div 
+                        key={item._tempId} 
+                        onClick={() => !isExp && setExpandedAiItemId(item._tempId)}
+                        className={`bg-black/5 dark:bg-white/5 rounded-2xl border-l-4 transition-all duration-300 ease-in-out ${isExp ? 'p-5 shadow-lg bg-white/60 dark:bg-zinc-800/80 scale-[1.02]' : 'p-3 hover:bg-black/10 dark:hover:bg-white/10 cursor-pointer'}`} 
+                        style={{ borderLeftColor: item.color || '#FF9A8B' }}
+                      >
+                        {!isExp ? (
+                          // Свернутый вид (Превью)
+                          <div className="flex flex-col pointer-events-none">
+                            <p className="font-bold text-sm text-textMain truncate">{item.title}</p>
+                            <div className="flex items-center space-x-2 mt-1.5">
+                              <span className="text-[10px] font-bold bg-black/5 dark:bg-white/10 px-2 py-0.5 rounded-md text-textMuted">
+                                {formatPillDate(item.startDate)} {item.type === 'event' && !item.isAllDay && item.startTime ? `в ${item.startTime}` : ''}
+                              </span>
+                              {item.comments && <span className="text-[10px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-md"><AlignLeft className="w-3 h-3 inline mr-1"/>Заметки</span>}
+                            </div>
+                          </div>
+                        ) : (
+                          // Развернутый вид (Редактирование)
+                          <div className="space-y-4 animate-in fade-in zoom-in-95 duration-200">
+                             <div className="flex justify-between items-center mb-1">
+                               <span className="text-[10px] font-bold text-primary uppercase tracking-wider">Редактирование</span>
+                               <button onClick={(e) => { e.stopPropagation(); setExpandedAiItemId(null); }} className="p-1.5 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 rounded-full text-textMuted transition-colors">
+                                  <ChevronDown className="w-4 h-4 rotate-180"/>
+                               </button>
+                             </div>
+                             
+                             <input value={item.title} onChange={e => { const newItems = [...parsedItems]; newItems[i].title = e.target.value; setParsedItems(newItems); }} placeholder="Название..." className="font-bold text-base text-textMain bg-transparent w-full outline-none border-b border-black/10 dark:border-white/10 pb-1.5 focus:border-primary transition-colors"/>
+                             
+                             <textarea value={item.comments || ''} onChange={e => { const newItems = [...parsedItems]; newItems[i].comments = e.target.value; setParsedItems(newItems); }} className="w-full bg-black/5 dark:bg-white/5 rounded-xl p-3 text-xs font-medium text-textMain outline-none min-h-[70px] resize-none placeholder:text-textMuted/60" placeholder="Заметки, списки или пояснения..."></textarea>
+                             
+                             <div className="flex items-center space-x-2">
+                                <IOSPickerPill type="date" value={item.startDate} onChange={(val: string) => { const newItems = [...parsedItems]; newItems[i].startDate = val; setParsedItems(newItems); }} />
+                                {item.type === 'event' && !item.isAllDay && (
+                                  <>
+                                    <IOSPickerPill type="time" value={item.startTime || '09:00'} onChange={(val: string) => { 
+                                       const newItems = [...parsedItems]; 
+                                       newItems[i].startTime = val; 
+                                       // Сдвигаем конец на час, если он стал меньше начала
+                                       if (timeToPixels(val) >= timeToPixels(newItems[i].endTime || addOneHour(val))) {
+                                          newItems[i].endTime = addOneHour(val);
+                                       }
+                                       setParsedItems(newItems); 
+                                    }} />
+                                    <span className="text-textMuted font-bold">-</span>
+                                    <IOSPickerPill type="time" value={item.endTime || addOneHour(item.startTime || '09:00')} onChange={(val: string) => { const newItems = [...parsedItems]; newItems[i].endTime = val; setParsedItems(newItems); }} />
+                                  </>
+                                )}
+                             </div>
+                             
+                             <div className="flex space-x-3 pt-1">
+                                {COLORS.map(c => (
+                                  <div key={c} onClick={() => { const newItems = [...parsedItems]; newItems[i].color = c; setParsedItems(newItems); }} className={`w-7 h-7 rounded-full cursor-pointer transition-all flex items-center justify-center ${item.color === c ? 'scale-110 shadow-md ring-2 ring-offset-2 ring-offset-transparent ring-primary' : 'opacity-60 scale-90 hover:opacity-100'}`} style={{ backgroundColor: c }}>
+                                     {item.color === c && <div className="w-full h-full rounded-full border-2 border-white/50 dark:border-zinc-800/50"></div>}
+                                  </div>
+                                ))}
+                             </div>
+                          </div>
+                        )}
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                </div>
-               <button onClick={confirmAiTasks} className="w-full bg-gradient-to-r from-[#A7C957] to-[#8eb33b] text-white py-3.5 rounded-2xl font-bold hover:opacity-90 transition-opacity">
-                 Подтвердить и добавить
+               
+               <button onClick={confirmAiTasks} className="w-full bg-gradient-to-r from-[#A7C957] to-[#8eb33b] text-white py-4 rounded-2xl font-extrabold shadow-[0_8px_20px_rgba(167,201,87,0.4)] hover:opacity-90 active:scale-95 transition-all mt-2">
+                 Применить ({parsedItems.length})
                </button>
              </div>
            )}

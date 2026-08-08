@@ -79,7 +79,10 @@ async def parse_text_with_ai(prompt: AIPrompt, current_user: User = Depends(get_
     api_keys = [k.strip() for k in keys_env.split(",") if k.strip()]
     
     system_prompt = f"""Ты ИИ-ассистент ежедневника. Текущая дата: {prompt.current_date}.
-    Проанализируй текст и верни массив JSON объектов. Формат объекта:
+    Проанализируй текст и верни массив JSON объектов.
+    ВАЖНО: Если пользователь диктует какие-либо детали, заметки, списки покупок или пояснения к задаче, обязательно помещай их в поле "comments".
+    
+    Формат объекта:
     {{
       "type": "event" | "task",
       "title": "Название",
@@ -88,7 +91,8 @@ async def parse_text_with_ai(prompt: AIPrompt, current_user: User = Depends(get_
       "endDate": "YYYY-MM-DD",
       "startTime": "HH:MM" | null,
       "endTime": "HH:MM" | null,
-      "color": "#FF9A8B"
+      "color": "#FF9A8B",
+      "comments": "Текст комментария или пустая строка"
     }}
     ВЕРНИ ТОЛЬКО СЫРОЙ МАССИВ JSON, БЕЗ МАРКДАУНА. Текст: "{prompt.text}"
     """
