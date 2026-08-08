@@ -1,0 +1,39 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-main: #FFFBFB;
+    --surface: #FFFFFF;
+    --surface-hover: #F9FAFB;
+    --secondary: #FFD6CC;
+    --text-main: #2D333A;
+    --text-muted: #8D949E;
+    --ios-gray: #F2F2F7;
+    --border-main: #F3F4F6;
+    --status-icon: #000000;
+  }
+
+  .dark {
+    --bg-main: #09090B;
+    --surface: #18181B;
+    --surface-hover: #27272A;
+    --secondary: #3F2D2B;
+    --text-main: #F4F4F5;
+    --text-muted: #A1A1AA;
+    --ios-gray: #1C1C1E;
+    --border-main: #27272A;
+    --status-icon: #FFFFFF;
+  }
+
+  body {
+    @apply bg-bgMain text-textMain antialiased transition-colors duration-300;
+    font-family: 'Nunito', sans-serif;
+  }
+}
+
+/* Скрываем стандартный скроллбар для красоты */
+::-webkit-scrollbar {
+  display: none;
+}
