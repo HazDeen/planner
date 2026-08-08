@@ -99,8 +99,7 @@ async def parse_text_with_ai(prompt: AIPrompt, current_user: User = Depends(get_
             masked_key = f"...{api_key[-4:]}" if len(api_key) > 4 else "INVALID"
             logger.info(f"--- ИИ Запрос: Пробуем ключ {index + 1} из {len(api_keys)} ({masked_key}) ---")
             
-            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key={api_key}"
-                        
+            api_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key={api_key}"
             try:
                 response = await client.post(
                     api_url,
