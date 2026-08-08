@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Check, Plus, Clock, Calendar as CalendarIcon, Inbox, User, 
-  MoreHorizontal, Sun, Moon, X, Trash2, Repeat, ListTodo, 
+  Sun, Moon, X, Trash2, Repeat, ListTodo, 
   AlignLeft, Mic, Sparkles, Send, ChevronDown, CalendarDays,
   ChevronLeft, ChevronRight, Loader2
 } from 'lucide-react';
+import toast, { Toaster } from 'react-hot-toast';
 
 // --- НАСТРОЙКИ API ---
 const API_URL = 'http://127.0.0.1:8000'; // ЗАМЕНИ НА СВОЙ IP ДЛЯ ДОСТУПА С ТЕЛЕФОНА (например, http://2.26.52.22:8000)
@@ -247,7 +248,7 @@ export default function App() {
         if (regRes.ok) {
           res = await fetch(`${API_URL}/token`, { method: 'POST', body: formData });
         } else {
-          return alert('Ошибка авторизации или пароль неверен.');
+          return toast.error('Ошибка авторизации или пароль неверен.');
         }
       }
 
@@ -255,11 +256,12 @@ export default function App() {
         const data = await res.json();
         localStorage.setItem('token', data.access_token);
         setAppStage('loading');
+        toast.success('Успешный вход!');
       } else {
-        alert('Ошибка сервера');
+        toast.error('Ошибка сервера');
       }
     } catch (err) {
-      alert('Нет связи с сервером. Бэкенд запущен?');
+      toast.error('Нет связи с сервером. Бэкенд запущен?');
     }
   };
 
@@ -356,7 +358,7 @@ export default function App() {
   const closeSheet = () => setSheetState({ isOpen: false, id: null, type: 'event' });
 
   const saveTask = async () => {
-    if (!formData.title.trim()) return alert('Введите название!');
+    if (!formData.title.trim()) return toast.error('Введите название!');
     const validSubtasks = formData.subtasks.filter(s => s.title.trim() !== '');
     const payload = mapToDB({ ...formData, subtasks: validSubtasks }, sheetState.type);
 
@@ -379,9 +381,10 @@ export default function App() {
           else setTasks([...tasks, ...createdArr]);
         }
       }
+      toast.success('Сохранено!');
       closeSheet();
     } catch (e) {
-      alert("Ошибка сохранения");
+      toast.error("Ошибка сохранения");
     }
   };
 
@@ -393,9 +396,11 @@ export default function App() {
       
       if (sheetState.type === 'event') setEvents(events.filter(e => e.id !== sheetState.id));
       else setTasks(tasks.filter(t => t.id !== sheetState.id));
+      
+      toast.success("Удалено!");
       closeSheet();
     } catch (e) {
-      alert("Ошибка удаления");
+      toast.error("Ошибка удаления");
     }
   };
 
@@ -411,7 +416,7 @@ export default function App() {
       recognition.onerror = () => setIsListening(false);
       recognition.onend = () => setIsListening(false);
       recognition.start();
-    } else alert('Голосовой ввод не поддерживается.');
+    } else toast.error('Голосовой ввод не поддерживается.');
   };
 
   const processAIText = async () => {
@@ -438,7 +443,7 @@ export default function App() {
       const parsed = await response.json();
       setParsedItems(Array.isArray(parsed) ? parsed.map((item: any) => ({...item, _tempId: Math.random()})) : []);
     } catch (error) { 
-      alert('Ошибка при обращении к ИИ-ассистенту.'); 
+      toast.error('Ошибка при обращении к ИИ-ассистенту.'); 
     } finally { 
       setIsProcessing(false); 
     }
@@ -463,7 +468,8 @@ export default function App() {
           else setTasks(prev => [...prev, ...createdArr]);
         }
       }
-    } catch (e) { alert("Ошибка при сохранении ИИ-задач"); }
+      toast.success("Задачи добавлены!");
+    } catch (e) { toast.error("Ошибка при сохранении ИИ-задач"); }
     
     setParsedItems(null); setAiText(''); setAiModalOpen(false);
   };
@@ -620,6 +626,18 @@ export default function App() {
   return (
     <div className={`h-[100dvh] w-full transition-colors duration-500 relative overflow-hidden ${isDark ? 'dark bg-zinc-950' : 'bg-[#FFF5F3]'}`}>
       
+      <Toaster 
+        position="top-center" 
+        toastOptions={{
+          style: {
+            background: isDark ? '#27272a' : '#fff',
+            color: isDark ? '#F4F4F5' : '#2D333A',
+            borderRadius: '16px',
+            fontWeight: 'bold'
+          }
+        }} 
+      />
+
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
         <div className={`absolute -top-[20%] -left-[10%] w-[70%] h-[70%] rounded-full blur-[120px] opacity-60 transition-colors duration-700 ${isDark ? 'bg-rose-900/30' : 'bg-rose-200/50'}`}></div>
         <div className={`absolute top-[40%] -right-[10%] w-[60%] h-[60%] rounded-full blur-[100px] opacity-60 transition-colors duration-700 ${isDark ? 'bg-indigo-900/20' : 'bg-blue-200/40'}`}></div>
