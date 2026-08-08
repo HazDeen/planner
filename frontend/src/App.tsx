@@ -567,69 +567,85 @@ export default function App() {
   }
 
   const todaysEvents = events.filter(e => e.startDate === currentDate);
-  const allDayEvents = todaysEvents.filter(e => e.isAllDay);
-  const timedEvents = calculateOverlaps(todaysEvents);
+  const todaysTasks = tasks.filter(t => t.startDate === currentDate);
+  
+  // Собираем все дела на весь день (и задачи, и события) для закрепленной шапки
+  const allDayItems = [...todaysEvents, ...todaysTasks].filter(item => item.isAllDay);
+  
+  // Только события с точным временем отправляются в сетку часов
+  const timedEvents = calculateOverlaps(todaysEvents.filter(e => !e.isAllDay));
   const headerDateString = new Date(currentDate).toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
 
   const renderTimeline = () => (
-    <div className="flex-1 overflow-y-auto relative px-3 md:px-10 pb-32 md:pb-10 custom-scrollbar max-w-5xl mx-auto w-full" ref={timelineRef}>
-      <div className={`w-full flex flex-col space-y-2 px-10 relative z-30 ${allDayEvents.length > 0 ? 'pt-6' : 'pt-2'}`}>
-        {allDayEvents.map(evt => (
-          <div key={evt.id} onClick={() => openSheet(evt.id, 'event')}
-               className={`bg-white/90 dark:bg-zinc-800/90 backdrop-blur-md rounded-xl shadow-sm border border-white/40 dark:border-zinc-700 p-3 flex items-center justify-between cursor-pointer border-l-4 transition-all hover:shadow-md ${evt.isCompleted ? 'opacity-60' : ''}`}
-               style={{ borderLeftColor: evt.color }}>
-            <div className="flex items-center space-x-3 w-full">
-              <div onClick={(e) => { e.stopPropagation(); toggleTaskCompletion(evt.id, 'event'); }}
-                   className={`w-5 h-5 min-w-[20px] rounded-full border-2 flex items-center justify-center transition-colors ${evt.isCompleted ? 'bg-primary border-primary' : 'border-textMuted'}`}>
-                <Check className={`w-3.5 h-3.5 text-white transition-opacity ${evt.isCompleted ? 'opacity-100' : 'opacity-0'}`} />
+    <div className="flex-1 flex flex-col h-full relative w-full max-w-5xl mx-auto overflow-hidden">
+      
+      {/* ЗАКРЕПЛЕННЫЙ БЛОК СВЕРХУ (Задачи на день) */}
+      {allDayItems.length > 0 && (
+        <div className="w-full flex flex-col space-y-2 px-6 md:px-10 pt-2 pb-4 bg-[#FFF5F3]/90 dark:bg-zinc-950/90 backdrop-blur-xl z-40 border-b border-black/5 dark:border-white/5 flex-shrink-0">
+          {allDayItems.map(item => (
+            <div key={item.id} onClick={() => openSheet(item.id, item.type as 'event' | 'task')}
+                 className={`bg-white/90 dark:bg-zinc-800/90 backdrop-blur-md rounded-xl shadow-sm border border-white/40 dark:border-zinc-700 p-3 flex items-center justify-between cursor-pointer border-l-4 transition-all hover:shadow-md ${item.isCompleted ? 'opacity-60' : ''}`}
+                 style={{ borderLeftColor: item.color }}>
+              <div className="flex items-center space-x-3 w-full">
+                <div onClick={(e) => { e.stopPropagation(); toggleTaskCompletion(item.id, item.type as 'event' | 'task'); }}
+                     className={`w-5 h-5 min-w-[20px] rounded-full border-2 flex items-center justify-center transition-colors ${item.isCompleted ? 'bg-primary border-primary' : 'border-textMuted'}`}>
+                  <Check className={`w-3.5 h-3.5 text-white transition-opacity ${item.isCompleted ? 'opacity-100' : 'opacity-0'}`} />
+                </div>
+                <AnimatedStrikethrough text={item.title} isCompleted={item.isCompleted} className="font-bold text-[15px]" />
               </div>
-              <AnimatedStrikethrough text={evt.title} isCompleted={evt.isCompleted} className="font-bold text-[15px]" />
             </div>
-          </div>
-        ))}
-      </div>
-
-      <div className="relative flex mt-6 pb-10">
-        <div className="w-14 relative" style={{ height: '1440px' }}>
-          {Array.from({length: 25}).map((_, i) => (
-             <span key={i} className="absolute right-3 text-[11px] font-bold text-textMuted" style={{ top: `${i * 60}px`, transform: 'translateY(-50%)' }}>
-               {i < 10 ? '0'+i : i}:00
-             </span>
           ))}
         </div>
-        <div className="flex-1 relative border-l border-black/5 dark:border-white/5" style={{ height: '1440px' }}>
-          {Array.from({length: 25}).map((_, i) => (
-            <div key={i} className="absolute w-full border-t border-black/5 dark:border-white/5" style={{ top: `${i * 60}px` }}></div>
-          ))}
-          <div className="absolute w-full flex items-center z-20 pointer-events-none" style={{ top: `${currentTimePixels}px` }}>
-            <div className="w-full border-t-[2px] border-primary border-dashed relative">
-                <div className="absolute w-2.5 h-2.5 bg-primary rounded-full -left-1.5 -top-[5.5px] shadow-[0_0_12px_rgba(255,154,139,0.9)] animate-pulse"></div>
-            </div>
-          </div>
-          {timedEvents.map(evt => {
-            const topPx = timeToPixels(evt.startTime);
-            const heightPx = Math.max(timeToPixels(evt.endTime) - topPx, 30);
-            const widthPercent = 100 / (evt.numColumns || 1);
-            const leftPercent = (evt.col || 0) * widthPercent;
+      )}
 
-            return (
-              <div key={evt.id} onClick={() => openSheet(evt.id, 'event')}
-                   className={`absolute bg-white/90 dark:bg-zinc-800/90 backdrop-blur-md rounded-xl shadow-sm border border-white/40 dark:border-zinc-600 p-2.5 flex flex-col cursor-pointer hover:shadow-md transition-all z-10 border-l-4 overflow-hidden ${evt.isCompleted ? 'opacity-60' : ''}`}
-                   style={{ top: `${topPx}px`, height: `${heightPx}px`, width: `calc(${widthPercent}% - 8px)`, left: `calc(${leftPercent}% + 4px)`, borderLeftColor: evt.color }}>
-                <div className="flex items-start space-x-2 h-full">
-                  <div onClick={(e) => { e.stopPropagation(); toggleTaskCompletion(evt.id, 'event'); }}
-                       className={`w-4 h-4 min-w-[16px] rounded-full border-2 flex items-center justify-center mt-0.5 transition-colors ${evt.isCompleted ? 'bg-primary border-primary' : 'border-textMuted'}`}>
-                    <Check className={`w-2.5 h-2.5 text-white transition-opacity ${evt.isCompleted ? 'opacity-100' : 'opacity-0'}`} />
-                  </div>
-                  <div className="flex-1 overflow-hidden h-full flex flex-col">
-                    <AnimatedStrikethrough text={evt.title} isCompleted={evt.isCompleted} className="font-bold text-[13px] leading-tight truncate block" />
-                    {heightPx >= 45 && <p className={`text-[10px] mt-0.5 font-medium transition-colors ${evt.isCompleted ? 'text-textMuted/60' : 'text-textMuted'}`}>{evt.startTime} - {evt.endTime}</p>}
-                    {heightPx >= 65 && evt.comments && <p className={`text-[10px] truncate mt-auto mb-1 bg-black/5 dark:bg-white/5 rounded px-1.5 py-0.5 w-fit transition-colors ${evt.isCompleted ? 'text-textMuted/60' : 'text-textMuted'}`}><AlignLeft className="w-2.5 h-2.5 inline mr-1"/>{evt.comments}</p>}
+      {/* СКРОЛЛИРУЕМАЯ СЕТКА ЧАСОВ */}
+      <div className="flex-1 overflow-y-auto relative px-3 md:px-10 pb-32 md:pb-10 custom-scrollbar" ref={timelineRef}>
+        <div className="relative flex mt-6 pb-10">
+          <div className="w-14 relative" style={{ height: '1440px' }}>
+            {Array.from({length: 25}).map((_, i) => (
+               <span key={i} className="absolute right-3 text-[11px] font-bold text-textMuted" style={{ top: `${i * 60}px`, transform: 'translateY(-50%)' }}>
+                 {i < 10 ? '0'+i : i}:00
+               </span>
+            ))}
+          </div>
+          <div className="flex-1 relative border-l border-black/5 dark:border-white/5" style={{ height: '1440px' }}>
+            {Array.from({length: 25}).map((_, i) => (
+              <div key={i} className="absolute w-full border-t border-black/5 dark:border-white/5" style={{ top: `${i * 60}px` }}></div>
+            ))}
+            
+            {/* Пульсирующая линия времени */}
+            <div className="absolute w-full flex items-center z-20 pointer-events-none" style={{ top: `${currentTimePixels}px` }}>
+               <div className="w-full border-t-[2px] border-primary border-dashed relative">
+                  <div className="absolute w-2.5 h-2.5 bg-primary rounded-full -left-1.5 -top-[5.5px] shadow-[0_0_12px_rgba(255,154,139,0.9)] animate-pulse"></div>
+               </div>
+            </div>
+
+            {/* Блоки событий с точным временем */}
+            {timedEvents.map(evt => {
+              const topPx = timeToPixels(evt.startTime);
+              const heightPx = Math.max(timeToPixels(evt.endTime) - topPx, 30);
+              const widthPercent = 100 / (evt.numColumns || 1);
+              const leftPercent = (evt.col || 0) * widthPercent;
+
+              return (
+                <div key={evt.id} onClick={() => openSheet(evt.id, 'event')}
+                     className={`absolute bg-white/90 dark:bg-zinc-800/90 backdrop-blur-md rounded-xl shadow-sm border border-white/40 dark:border-zinc-600 p-2.5 flex flex-col cursor-pointer hover:shadow-md transition-all z-10 border-l-4 overflow-hidden ${evt.isCompleted ? 'opacity-60' : ''}`}
+                     style={{ top: `${topPx}px`, height: `${heightPx}px`, width: `calc(${widthPercent}% - 8px)`, left: `calc(${leftPercent}% + 4px)`, borderLeftColor: evt.color }}>
+                  <div className="flex items-start space-x-2 h-full">
+                    <div onClick={(e) => { e.stopPropagation(); toggleTaskCompletion(evt.id, 'event'); }}
+                         className={`w-4 h-4 min-w-[16px] rounded-full border-2 flex items-center justify-center mt-0.5 transition-colors ${evt.isCompleted ? 'bg-primary border-primary' : 'border-textMuted'}`}>
+                      <Check className={`w-2.5 h-2.5 text-white transition-opacity ${evt.isCompleted ? 'opacity-100' : 'opacity-0'}`} />
+                    </div>
+                    <div className="flex-1 overflow-hidden h-full flex flex-col">
+                      <AnimatedStrikethrough text={evt.title} isCompleted={evt.isCompleted} className="font-bold text-[13px] leading-tight truncate block" />
+                      {heightPx >= 45 && <p className={`text-[10px] mt-0.5 font-medium transition-colors ${evt.isCompleted ? 'text-textMuted/60' : 'text-textMuted'}`}>{evt.startTime} - {evt.endTime}</p>}
+                      {heightPx >= 65 && evt.comments && <p className={`text-[10px] truncate mt-auto mb-1 bg-black/5 dark:bg-white/5 rounded px-1.5 py-0.5 w-fit transition-colors ${evt.isCompleted ? 'text-textMuted/60' : 'text-textMuted'}`}><AlignLeft className="w-2.5 h-2.5 inline mr-1"/>{evt.comments}</p>}
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
+          </div>
         </div>
       </div>
     </div>
@@ -657,7 +673,11 @@ export default function App() {
                     {task.startDate && (
                       <div className="flex items-center space-x-2 mt-2">
                         <span className="text-[11px] font-semibold bg-black/5 dark:bg-white/5 text-textMuted px-2 py-1 rounded-md flex items-center">
-                          <CalendarIcon className="w-3 h-3 mr-1.5" style={{ color: task.color }}/> До {task.startDate.slice(-2)} авг
+                          <CalendarIcon className="w-3 h-3 mr-1.5" style={{ color: task.color }}/> 
+                          {task.isAllDay 
+                            ? formatPillDate(task.startDate) 
+                            : `До ${formatPillDate(task.startDate)} ${task.startTime && task.startTime !== '00:00' ? task.startTime : ''}`
+                          }
                         </span>
                         {task.subtasks.length > 0 && <span className="text-[11px] font-bold text-primary bg-primary/10 px-2 py-1 rounded-md">{completedSubs}/{task.subtasks.length}</span>}
                       </div>
@@ -952,12 +972,22 @@ export default function App() {
                 </div>
               </>
             ) : (
-              <div className="flex justify-between items-center px-5 py-3 bg-transparent">
-                <span className="font-bold text-textMain">Дедлайн (Дата)</span>
-                <div className="flex space-x-2 items-center">
-                   <IOSPickerPill type="date" value={formData.startDate} onChange={(val: string) => setFormData({...formData, startDate: val})} />
+              <>
+                <div className="flex justify-between items-center px-5 py-4 bg-transparent cursor-pointer border-b border-black/5 dark:border-white/5" onClick={() => setFormData({...formData, isAllDay: !formData.isAllDay})}>
+                  <div className="flex items-center space-x-3 text-textMain"><Clock className="w-5 h-5 text-primary"/><span className="font-bold">Точное время</span></div>
+                  <div className={`w-12 h-7 rounded-full p-1 transition-colors ${!formData.isAllDay ? 'bg-primary' : 'bg-black/10 dark:bg-white/10'}`}>
+                    <div className={`w-5 h-5 bg-white rounded-full shadow-md transition-transform ${!formData.isAllDay ? 'translate-x-5' : ''}`}></div>
+                  </div>
                 </div>
-              </div>
+                
+                <div className="flex justify-between items-center px-5 py-3 bg-transparent">
+                  <span className="font-bold text-textMain">Дедлайн</span>
+                  <div className="flex space-x-2 items-center">
+                     <IOSPickerPill type="date" value={formData.startDate} onChange={(val: string) => setFormData({...formData, startDate: val})} />
+                     {!formData.isAllDay && <IOSPickerPill type="time" value={formData.startTime} onChange={(val: string) => setFormData({...formData, startTime: val})} />}
+                  </div>
+                </div>
+              </>
             )}
           </div>
             
@@ -1057,7 +1087,9 @@ export default function App() {
                             <p className="font-bold text-sm text-textMain truncate">{item.title}</p>
                             <div className="flex items-center space-x-2 mt-1.5">
                               <span className="text-[10px] font-bold bg-black/5 dark:bg-white/10 px-2 py-0.5 rounded-md text-textMuted">
-                                {formatPillDate(item.startDate)} {item.type === 'event' && !item.isAllDay && item.startTime ? `в ${item.startTime}` : ''}
+                                {formatPillDate(item.startDate)} 
+                                {item.type === 'event' && !item.isAllDay && item.startTime ? ` с ${item.startTime}` : ''}
+                                {item.type === 'task' && !item.isAllDay && item.startTime ? ` до ${item.startTime}` : ''}
                               </span>
                               {item.comments && <span className="text-[10px] font-bold bg-primary/10 text-primary px-2 py-0.5 rounded-md"><AlignLeft className="w-3 h-3 inline mr-1"/>Заметки</span>}
                             </div>
@@ -1078,12 +1110,13 @@ export default function App() {
                              
                              <div className="flex items-center space-x-2">
                                 <IOSPickerPill type="date" value={item.startDate} onChange={(val: string) => { const newItems = [...parsedItems]; newItems[i].startDate = val; setParsedItems(newItems); }} />
+                                
+                                {/* Время для события (Начало - Конец) */}
                                 {item.type === 'event' && !item.isAllDay && (
                                   <>
                                     <IOSPickerPill type="time" value={item.startTime || '09:00'} onChange={(val: string) => { 
                                        const newItems = [...parsedItems]; 
                                        newItems[i].startTime = val; 
-                                       // Сдвигаем конец на час, если он стал меньше начала
                                        if (timeToPixels(val) >= timeToPixels(newItems[i].endTime || addOneHour(val))) {
                                           newItems[i].endTime = addOneHour(val);
                                        }
@@ -1092,6 +1125,15 @@ export default function App() {
                                     <span className="text-textMuted font-bold">-</span>
                                     <IOSPickerPill type="time" value={item.endTime || addOneHour(item.startTime || '09:00')} onChange={(val: string) => { const newItems = [...parsedItems]; newItems[i].endTime = val; setParsedItems(newItems); }} />
                                   </>
+                                )}
+
+                                {/* Время дедлайна для задачи */}
+                                {item.type === 'task' && !item.isAllDay && (
+                                    <IOSPickerPill type="time" value={item.startTime || '09:00'} onChange={(val: string) => { 
+                                       const newItems = [...parsedItems]; 
+                                       newItems[i].startTime = val; 
+                                       setParsedItems(newItems); 
+                                    }} />
                                 )}
                              </div>
                              
