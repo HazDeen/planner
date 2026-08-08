@@ -6,6 +6,9 @@ import {
   ChevronLeft, ChevronRight, Loader2
 } from 'lucide-react';
 
+// --- НАСТРОЙКИ API ---
+const API_URL = 'http://127.0.0.1:8000'; // ЗАМЕНИ НА СВОЙ IP ДЛЯ ДОСТУПА С ТЕЛЕФОНА (например, http://2.26.52.22:8000)
+
 // --- ТИПИЗАЦИЯ ---
 interface Subtask {
   id: string;
@@ -14,7 +17,7 @@ interface Subtask {
 }
 
 interface AppEvent {
-  id: string;
+  id: number;
   title: string;
   isAllDay: boolean;
   startDate: string;
@@ -26,18 +29,9 @@ interface AppEvent {
   subtasks: Subtask[];
   isCompleted: boolean;
   repeat: string;
+  type: string; // "event" | "task"
   col?: number;
   numColumns?: number;
-}
-
-interface AppTask {
-  id: string;
-  title: string;
-  startDate: string;
-  color: string;
-  comments: string;
-  subtasks: Subtask[];
-  isCompleted: boolean;
 }
 
 interface ParsedAiItem {
@@ -64,34 +58,11 @@ const REAL_TODAY = '2026-08-08';
 const COLORS = ['#FF9A8B', '#A7C957', '#3b82f6', '#a855f7', '#E56B6F'];
 const MONTH_NAMES = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 
-const initialEvents: AppEvent[] = [
-  {
-    id: 'evt_1', title: 'Синхронизация с командой', isAllDay: false, 
-    startDate: '2026-08-08', startTime: '09:00', endDate: '2026-08-08', endTime: '10:30', 
-    color: '#FF9A8B', comments: '', subtasks: [], isCompleted: false, repeat: 'none'
-  },
-  {
-    id: 'evt_2', title: 'Обед', isAllDay: false, 
-    startDate: '2026-08-08', startTime: '13:00', endDate: '2026-08-08', endTime: '14:00', 
-    color: '#A7C957', comments: 'Пойти в кафе на углу', subtasks: [], isCompleted: false, repeat: 'none'
-  }
-];
-
-const initialTasks: AppTask[] = [
-  {
-    id: 'tsk_1', title: 'Подготовка к релизу', startDate: '2026-08-10',
-    color: '#E56B6F', comments: '', isCompleted: false,
-    subtasks: [
-      { id: 'sub_1', title: 'Обновить документацию', isCompleted: true },
-      { id: 'sub_2', title: 'Проверить Dark Mode', isCompleted: false }
-    ]
-  }
-];
-
 const timeToPixels = (timeString: string | null): number => {
   if (!timeString) return 0;
-  const [hours, minutes] = timeString.split(':').map(Number);
-  return (hours * 60) + minutes;
+  const parts = timeString.split(':');
+  if (parts.length < 2) return 0;
+  return (parseInt(parts[0], 10) * 60) + parseInt(parts[1], 10);
 };
 
 const addDays = (dateStr: string, days: number): string => {
@@ -106,12 +77,42 @@ const formatPillDate = (dateStr: string) => {
   return `${parseInt(d, 10)}.${parseInt(m, 10)}.${y}`;
 };
 
+// Конвертеры между API и React
+const mapFromDB = (dbItem: any): AppEvent => ({
+  id: dbItem.id,
+  title: dbItem.title,
+  isAllDay: dbItem.is_all_day,
+  startDate: dbItem.start_date,
+  endDate: dbItem.end_date,
+  startTime: dbItem.start_time ? dbItem.start_time.substring(0, 5) : '00:00',
+  endTime: dbItem.end_time ? dbItem.end_time.substring(0, 5) : '00:00',
+  color: dbItem.color,
+  comments: dbItem.comments || '',
+  subtasks: dbItem.subtasks || [],
+  isCompleted: dbItem.is_completed,
+  repeat: dbItem.repeat || 'none',
+  type: dbItem.item_type || 'event'
+});
+
+const mapToDB = (item: any, type: string) => ({
+  title: item.title,
+  is_all_day: item.isAllDay,
+  start_date: item.startDate,
+  end_date: item.endDate,
+  start_time: item.isAllDay ? null : (item.startTime + ':00'),
+  end_time: item.isAllDay ? null : (item.endTime + ':00'),
+  color: item.color,
+  comments: item.comments,
+  subtasks: item.subtasks,
+  repeat: item.repeat || 'none',
+  item_type: type,
+  is_completed: item.isCompleted || false
+});
+
 // --- КОМПОНЕНТЫ UI ---
 const AnimatedStrikethrough = ({ text, isCompleted, className = '' }: { text: string, isCompleted: boolean, className?: string }) => (
   <span className={`relative inline-block w-fit ${className}`}>
-    <span className={`transition-colors duration-300 ${isCompleted ? 'text-textMuted' : 'text-textMain'}`}>
-      {text}
-    </span>
+    <span className={`transition-colors duration-300 ${isCompleted ? 'text-textMuted' : 'text-textMain'}`}>{text}</span>
     <span className={`absolute left-0 top-1/2 h-[1.5px] bg-textMuted transition-all duration-300 ease-out rounded-full ${isCompleted ? 'w-full' : 'w-0'}`}></span>
   </span>
 );
@@ -134,31 +135,28 @@ const IOSPickerPill = ({ type, value, onChange, options = [] }: any) => {
       <span className="text-[15px] font-medium text-textMain group-active:opacity-70 transition-opacity">
         {type === 'date' ? formatPillDate(value) : (value || '00:00')}
       </span>
-      <input 
-        type={type} 
-        value={value} 
-        onChange={e => onChange(e.target.value)} 
-        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" 
-      />
+      <input type={type} value={value} onChange={e => onChange(e.target.value)} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
     </div>
   );
 };
 
 // --- ОСНОВНОЙ КОМПОНЕНТ ---
 export default function App() {
-  const [appStage, setAppStage] = useState<'loading' | 'auth' | 'app'>('loading');
+  const [appStage, setAppStage] = useState<'loading' | 'auth' | 'app'>('auth');
   const [username, setUsername] = useState<string>('');
   const [password, setPassword] = useState<string>('');
 
   const [currentDate, setCurrentDate] = useState<string>(REAL_TODAY);
   const [activeTab, setActiveTab] = useState<'today' | 'calendar' | 'tasks' | 'profile'>('today');
-  const [events, setEvents] = useState<AppEvent[]>(initialEvents);
-  const [tasks, setTasks] = useState<AppTask[]>(initialTasks);
+  
+  const [events, setEvents] = useState<AppEvent[]>([]);
+  const [tasks, setTasks] = useState<AppEvent[]>([]); // Tasks and Events share the same DB format now
+  
   const [isDark, setIsDark] = useState<boolean>(false);
   const [expandedTasks, setExpandedTasks] = useState<Record<string, boolean>>({});
   const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date(REAL_TODAY));
   
-  const [sheetState, setSheetState] = useState<{ isOpen: boolean; id: string | null; type: 'event' | 'task' }>({ isOpen: false, id: null, type: 'event' });
+  const [sheetState, setSheetState] = useState<{ isOpen: boolean; id: number | null; type: 'event' | 'task' }>({ isOpen: false, id: null, type: 'event' });
   const [formData, setFormData] = useState({
     title: '', isAllDay: false, startDate: REAL_TODAY, endDate: REAL_TODAY, 
     startTime: '09:00', endTime: '10:00', repeat: 'none', color: '#FF9A8B', 
@@ -173,10 +171,49 @@ export default function App() {
 
   const timelineRef = useRef<HTMLDivElement>(null);
 
+  // Auto-login check
+  useEffect(() => {
+    const token = localStorage.getItem('token');
+    if (token) {
+      try {
+        const payload = JSON.parse(atob(token.split('.')[1]));
+        setUsername(payload.sub);
+        setAppStage('loading');
+      } catch (e) {
+        localStorage.removeItem('token');
+      }
+    }
+  }, []);
+
+  // Fetch Data on Loading Stage
   useEffect(() => {
     if (appStage === 'loading') {
-      const timer = setTimeout(() => setAppStage('auth'), 5000);
-      return () => clearTimeout(timer);
+      const loadData = async () => {
+        try {
+          const token = localStorage.getItem('token');
+          const res = await fetch(`${API_URL}/events/`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+          });
+          
+          if (res.status === 401) {
+            localStorage.removeItem('token');
+            setAppStage('auth');
+            return;
+          }
+          
+          if (res.ok) {
+            const data = await res.json();
+            const mapped = data.map(mapFromDB);
+            setEvents(mapped.filter((d: AppEvent) => d.type === 'event'));
+            setTasks(mapped.filter((d: AppEvent) => d.type === 'task'));
+          }
+        } catch (e) {
+          console.error('Failed to fetch from API', e);
+        } finally {
+          setTimeout(() => setAppStage('app'), 1500);
+        }
+      };
+      loadData();
     }
   }, [appStage]);
 
@@ -188,9 +225,42 @@ export default function App() {
 
   const toggleDark = () => setIsDark(!isDark);
 
-  const handleLoginSubmit = (e: React.FormEvent) => {
+  const handleLoginSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (username.trim().length > 0) setAppStage('app');
+    if (!username.trim() || !password.trim()) return;
+
+    try {
+      const formData = new URLSearchParams();
+      formData.append('username', username);
+      formData.append('password', password);
+
+      let res = await fetch(`${API_URL}/token`, { method: 'POST', body: formData });
+
+      if (res.status === 400 || res.status === 401) {
+        // Auto-register fallback
+        const regRes = await fetch(`${API_URL}/register`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ username, password })
+        });
+
+        if (regRes.ok) {
+          res = await fetch(`${API_URL}/token`, { method: 'POST', body: formData });
+        } else {
+          return alert('Ошибка авторизации или пароль неверен.');
+        }
+      }
+
+      if (res.ok) {
+        const data = await res.json();
+        localStorage.setItem('token', data.access_token);
+        setAppStage('loading');
+      } else {
+        alert('Ошибка сервера');
+      }
+    } catch (err) {
+      alert('Нет связи с сервером. Бэкенд запущен?');
+    }
   };
 
   const calculateOverlaps = (dayEvents: AppEvent[]): AppEvent[] => {
@@ -222,48 +292,62 @@ export default function App() {
         lastEventEnding = Math.max(lastEventEnding || 0, timeToPixels(ev.endTime));
       }
     });
-    if (columns.length > 0) {
-      columns.forEach(col => col.forEach(e => { e.numColumns = columns.length; }));
-    }
+    if (columns.length > 0) columns.forEach(col => col.forEach(e => { e.numColumns = columns.length; }));
     return timed;
   };
 
-  const toggleTaskCompletion = (id: string, type: 'event' | 'task') => {
-    if (type === 'event') setEvents(events.map(e => e.id === id ? { ...e, isCompleted: !e.isCompleted } : e));
-    else setTasks(tasks.map(t => t.id === id ? { ...t, isCompleted: !t.isCompleted } : t));
+  const toggleTaskCompletion = async (id: number, type: 'event' | 'task') => {
+    const item = type === 'event' ? events.find(e => e.id === id) : tasks.find(t => t.id === id);
+    if (!item) return;
+
+    const updatedItem = { ...item, isCompleted: !item.isCompleted };
+    
+    if (type === 'event') setEvents(events.map(e => e.id === id ? updatedItem : e));
+    else setTasks(tasks.map(t => t.id === id ? updatedItem : t));
+
+    try {
+      const token = localStorage.getItem('token');
+      await fetch(`${API_URL}/events/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(mapToDB(updatedItem, type))
+      });
+    } catch(e) { console.error(e); }
   };
 
-  const toggleSubtaskCompletion = (taskId: string, subtaskId: string) => {
-    setTasks(tasks.map(t => {
-      if (t.id === taskId) return { ...t, subtasks: t.subtasks.map(s => s.id === subtaskId ? { ...s, isCompleted: !s.isCompleted } : s) };
-      return t;
-    }));
+  const toggleSubtaskCompletion = async (taskId: number, subtaskId: string) => {
+    const task = tasks.find(t => t.id === taskId);
+    if (!task) return;
+
+    const updatedTask = { ...task, subtasks: task.subtasks.map(s => s.id === subtaskId ? { ...s, isCompleted: !s.isCompleted } : s) };
+    setTasks(tasks.map(t => t.id === taskId ? updatedTask : t));
+
+    try {
+      const token = localStorage.getItem('token');
+      await fetch(`${API_URL}/events/${taskId}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify(mapToDB(updatedTask, 'task'))
+      });
+    } catch(e) {}
   };
 
-  const toggleTaskExpand = (id: string) => setExpandedTasks(prev => ({ ...prev, [id]: !prev[id] }));
+  const toggleTaskExpand = (id: number) => setExpandedTasks(prev => ({ ...prev, [id]: !prev[id] }));
 
-  const openSheet = (id: string | null = null, type: 'event' | 'task' = 'event') => {
+  const openSheet = (id: number | null = null, type: 'event' | 'task' = 'event') => {
     if (id) {
       const obj = type === 'event' ? events.find(e => e.id === id) : tasks.find(t => t.id === id);
       if (obj) {
         setFormData({
-          title: obj.title || '', 
-          isAllDay: type === 'event' ? (obj as AppEvent).isAllDay : false,
-          startDate: obj.startDate || currentDate, 
-          endDate: type === 'event' ? (obj as AppEvent).endDate : currentDate,
-          startTime: type === 'event' ? (obj as AppEvent).startTime : '09:00', 
-          endTime: type === 'event' ? (obj as AppEvent).endTime : '10:00',
-          repeat: type === 'event' ? (obj as AppEvent).repeat : 'none', 
-          color: obj.color || '#FF9A8B',
-          comments: obj.comments || '', 
-          subtasks: obj.subtasks || []
+          title: obj.title || '', isAllDay: obj.isAllDay, startDate: obj.startDate || currentDate, endDate: obj.endDate || currentDate,
+          startTime: obj.startTime || '09:00', endTime: obj.endTime || '10:00', repeat: obj.repeat || 'none', color: obj.color || '#FF9A8B',
+          comments: obj.comments || '', subtasks: obj.subtasks || []
         });
       }
     } else {
       setFormData({
         title: '', isAllDay: false, startDate: currentDate, endDate: currentDate,
-        startTime: '09:00', endTime: '10:00', repeat: 'none', color: '#FF9A8B',
-        comments: '', subtasks: []
+        startTime: '09:00', endTime: '10:00', repeat: 'none', color: '#FF9A8B', comments: '', subtasks: []
       });
     }
     setSheetState({ isOpen: true, id, type });
@@ -271,34 +355,48 @@ export default function App() {
 
   const closeSheet = () => setSheetState({ isOpen: false, id: null, type: 'event' });
 
-  const saveTask = () => {
+  const saveTask = async () => {
     if (!formData.title.trim()) return alert('Введите название!');
     const validSubtasks = formData.subtasks.filter(s => s.title.trim() !== '');
-    
-    if (sheetState.id) {
-      if (sheetState.type === 'event') {
-        const updatedEvent = { ...formData, subtasks: validSubtasks } as AppEvent;
-        setEvents(events.map(e => e.id === sheetState.id ? { ...e, ...updatedEvent } : e));
+    const payload = mapToDB({ ...formData, subtasks: validSubtasks }, sheetState.type);
+
+    try {
+      const token = localStorage.getItem('token');
+      const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+
+      if (sheetState.id) {
+        const res = await fetch(`${API_URL}/events/${sheetState.id}`, { method: 'PUT', headers, body: JSON.stringify(payload) });
+        if (res.ok) {
+          const updated = mapFromDB(await res.json());
+          if (sheetState.type === 'event') setEvents(events.map(e => e.id === sheetState.id ? updated : e));
+          else setTasks(tasks.map(t => t.id === sheetState.id ? updated : t));
+        }
       } else {
-        const updatedTask = { ...formData, subtasks: validSubtasks } as unknown as AppTask;
-        setTasks(tasks.map(t => t.id === sheetState.id ? { ...t, ...updatedTask } : t));
+        const res = await fetch(`${API_URL}/events/`, { method: 'POST', headers, body: JSON.stringify(payload) });
+        if (res.ok) {
+          const createdArr = (await res.json()).map(mapFromDB);
+          if (sheetState.type === 'event') setEvents([...events, ...createdArr]);
+          else setTasks([...tasks, ...createdArr]);
+        }
       }
-    } else {
-      if (sheetState.type === 'event') {
-        const newEvent = { ...formData, subtasks: validSubtasks, id: 'evt_' + Date.now(), isCompleted: false } as AppEvent;
-        setEvents([...events, newEvent]);
-      } else {
-        const newTask = { ...formData, subtasks: validSubtasks, id: 'tsk_' + Date.now(), isCompleted: false } as AppTask;
-        setTasks([...tasks, newTask]);
-      }
+      closeSheet();
+    } catch (e) {
+      alert("Ошибка сохранения");
     }
-    closeSheet();
   };
 
-  const deleteTask = () => {
-    if (sheetState.type === 'event') setEvents(events.filter(e => e.id !== sheetState.id));
-    else setTasks(tasks.filter(t => t.id !== sheetState.id));
-    closeSheet();
+  const deleteTask = async () => {
+    if (!sheetState.id) return closeSheet();
+    try {
+      const token = localStorage.getItem('token');
+      await fetch(`${API_URL}/events/${sheetState.id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+      
+      if (sheetState.type === 'event') setEvents(events.filter(e => e.id !== sheetState.id));
+      else setTasks(tasks.filter(t => t.id !== sheetState.id));
+      closeSheet();
+    } catch (e) {
+      alert("Ошибка удаления");
+    }
   };
 
   const toggleListening = () => {
@@ -320,35 +418,53 @@ export default function App() {
     if (!aiText.trim()) return;
     setIsProcessing(true);
     try {
-      const apiKey = ""; 
-      const apiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
-      const prompt = `Ты ИИ-ассистент. Дата: ${REAL_TODAY}. Верни массив JSON. Формат: [{"type": "event" | "task", "title": "Название", "isAllDay": boolean, "startDate": "YYYY-MM-DD", "endDate": "YYYY-MM-DD", "startTime": "HH:MM" | null, "endTime": "HH:MM" | null, "color": "#FF9A8B"}]. Только сырой JSON. Текст: "${aiText}"`;
+      const token = localStorage.getItem('token');
+      const response = await fetch(`${API_URL}/api/ai/parse`, {
+        method: 'POST',
+        headers: { 
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({ 
+          text: aiText, 
+          current_date: REAL_TODAY 
+        })
+      });
 
-      const response = await fetch(apiUrl, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ contents: [{ parts: [{ text: prompt }] }] }) });
-      const result = await response.json();
-      const cleanJson = (result.candidates?.[0]?.content?.parts?.[0]?.text || '[]').replace(/```json\n?|```/g, '').trim();
-      
-      let parsed = [];
-      try { parsed = JSON.parse(cleanJson); } catch (e) { return alert('ИИ вернул неверный формат.'); }
+      if (!response.ok) {
+        throw new Error('Ошибка обработки на сервере');
+      }
+
+      const parsed = await response.json();
       setParsedItems(Array.isArray(parsed) ? parsed.map((item: any) => ({...item, _tempId: Math.random()})) : []);
-    } catch (error) {
-      alert('Ошибка при обработке запроса.');
-    } finally { setIsProcessing(false); }
+    } catch (error) { 
+      alert('Ошибка при обращении к ИИ-ассистенту.'); 
+    } finally { 
+      setIsProcessing(false); 
+    }
   };
 
-  const confirmAiTasks = () => {
+  const confirmAiTasks = async () => {
     if (!parsedItems) return;
-    const newEvents: AppEvent[] = [];
-    const newTasks: AppTask[] = [];
-    parsedItems.forEach(item => {
-      const base = {
-        title: item.title, isAllDay: item.isAllDay || false, startDate: item.startDate, endDate: item.endDate || item.startDate,
-        startTime: item.startTime || '09:00', endTime: item.endTime || '10:00', color: item.color || '#FF9A8B', comments: '', subtasks: [], isCompleted: false, repeat: 'none'
-      };
-      if (item.type === 'event') newEvents.push({ ...base, id: 'evt_' + Math.random() } as AppEvent);
-      else newTasks.push({ ...base, id: 'tsk_' + Math.random() } as AppTask);
-    });
-    setEvents([...events, ...newEvents]); setTasks([...tasks, ...newTasks]);
+    const token = localStorage.getItem('token');
+    const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+
+    try {
+      for (const item of parsedItems) {
+        const payload = mapToDB({
+           title: item.title, isAllDay: item.isAllDay || false, startDate: item.startDate, endDate: item.endDate || item.startDate,
+           startTime: item.startTime || '09:00', endTime: item.endTime || '10:00', color: item.color || '#FF9A8B', comments: '', subtasks: [], isCompleted: false, repeat: 'none'
+        }, item.type);
+
+        const res = await fetch(`${API_URL}/events/`, { method: 'POST', headers, body: JSON.stringify(payload) });
+        if (res.ok) {
+          const createdArr = (await res.json()).map(mapFromDB);
+          if (item.type === 'event') setEvents(prev => [...prev, ...createdArr]);
+          else setTasks(prev => [...prev, ...createdArr]);
+        }
+      }
+    } catch (e) { alert("Ошибка при сохранении ИИ-задач"); }
+    
     setParsedItems(null); setAiText(''); setAiModalOpen(false);
   };
 
@@ -403,8 +519,6 @@ export default function App() {
       </div>
 
       <div className="relative flex mt-6 pb-10">
-        
-        {/* ИСПРАВЛЕННЫЙ БЛОК ВРЕМЕНИ И СЕТКИ */}
         <div className="w-14 relative" style={{ height: '1440px' }}>
           {Array.from({length: 25}).map((_, i) => (
              <span key={i} className="absolute right-3 text-[11px] font-bold text-textMuted" style={{ top: `${i * 60}px`, transform: 'translateY(-50%)' }}>
@@ -412,19 +526,15 @@ export default function App() {
              </span>
           ))}
         </div>
-        
         <div className="flex-1 relative border-l border-black/5 dark:border-white/5" style={{ height: '1440px' }}>
           {Array.from({length: 25}).map((_, i) => (
             <div key={i} className="absolute w-full border-t border-black/5 dark:border-white/5" style={{ top: `${i * 60}px` }}></div>
           ))}
-          
-          {/* Линия текущего времени (для примера 21:00) */}
           <div className="absolute w-full flex items-center z-20 pointer-events-none" style={{ top: `${21 * 60}px` }}>
              <div className="w-full border-t-[2px] border-primary border-dashed relative">
                 <div className="absolute w-2.5 h-2.5 bg-primary rounded-full -left-1.5 -top-[5.5px] shadow-[0_0_12px_rgba(255,154,139,0.9)] animate-pulse"></div>
              </div>
           </div>
-
           {timedEvents.map(evt => {
             const topPx = timeToPixels(evt.startTime);
             const heightPx = Math.max(timeToPixels(evt.endTime) - topPx, 30);
@@ -483,12 +593,9 @@ export default function App() {
                     )}
                   </div>
                 </div>
-                {task.subtasks.length > 0 && (
-                   <ChevronDown className={`w-5 h-5 text-textMuted transition-transform duration-300 mt-1 ${isExpanded ? 'rotate-180' : ''}`} />
-                )}
+                {task.subtasks.length > 0 && <ChevronDown className={`w-5 h-5 text-textMuted transition-transform duration-300 mt-1 ${isExpanded ? 'rotate-180' : ''}`} />}
               </div>
             </div>
-            
             <div className={`grid transition-[grid-template-rows,opacity,margin] duration-300 ease-in-out ${isExpanded && task.subtasks.length > 0 ? 'grid-rows-[1fr] opacity-100' : 'grid-rows-[0fr] opacity-0'}`}>
               <div className="overflow-hidden">
                 <div className="border-t border-black/5 dark:border-white/5 bg-black/5 dark:bg-white/5 p-4 md:px-5 space-y-3">
@@ -525,22 +632,6 @@ export default function App() {
         input[type="date"]::-webkit-calendar-picker-indicator, input[type="time"]::-webkit-calendar-picker-indicator { opacity: 0; position: absolute; inset: 0; width: 100%; height: 100%; cursor: pointer; }
       `}} />
 
-      {appStage === 'loading' && (
-        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/40 dark:bg-zinc-900/60 backdrop-blur-3xl animate-in fade-in duration-1000">
-           <div className="relative mb-6">
-              <div className="w-20 h-20 bg-gradient-to-tr from-[#FF8573] to-[#FF9A8B] rounded-3xl flex items-center justify-center shadow-[0_10px_40px_rgba(255,154,139,0.6)] animate-pulse">
-                 <CalendarIcon className="w-10 h-10 text-white" />
-              </div>
-              <div className="absolute -inset-4 border-2 border-primary/30 rounded-[35px] animate-[spin_3s_linear_infinite]"></div>
-           </div>
-           <h1 className="text-2xl font-extrabold text-textMain tracking-tight">Ежедневник</h1>
-           <div className="flex items-center space-x-2 mt-4 text-textMuted">
-              <Loader2 className="w-4 h-4 animate-spin" />
-              <span className="text-sm font-semibold">Загрузка данных...</span>
-           </div>
-        </div>
-      )}
-
       {appStage === 'auth' && (
         <div className="absolute inset-0 z-50 flex items-center justify-center bg-white/40 dark:bg-zinc-900/60 backdrop-blur-3xl p-6 animate-in zoom-in-95 duration-500">
            <form onSubmit={handleLoginSubmit} className="flex flex-col w-full max-w-sm bg-white/60 dark:bg-zinc-900/60 backdrop-blur-2xl p-8 rounded-[40px] border border-white/20 shadow-2xl">
@@ -553,27 +644,28 @@ export default function App() {
               <p className="text-center text-textMuted text-sm font-medium mb-8">Войдите, чтобы продолжить работу</p>
               
               <div className="space-y-4">
-                 <input 
-                   required 
-                   value={username} 
-                   onChange={e=>setUsername(e.target.value)} 
-                   placeholder="Имя пользователя" 
-                   className="w-full bg-black/5 dark:bg-white/5 rounded-2xl px-5 py-4 outline-none font-bold text-textMain placeholder:text-textMuted focus:ring-2 focus:ring-primary/50 transition-all" 
-                 />
-                 <input 
-                   required 
-                   type="password" 
-                   value={password} 
-                   onChange={e=>setPassword(e.target.value)} 
-                   placeholder="Пароль" 
-                   className="w-full bg-black/5 dark:bg-white/5 rounded-2xl px-5 py-4 outline-none font-bold text-textMain placeholder:text-textMuted focus:ring-2 focus:ring-primary/50 transition-all" 
-                 />
+                 <input required value={username} onChange={e=>setUsername(e.target.value)} placeholder="Имя пользователя" className="w-full bg-black/5 dark:bg-white/5 rounded-2xl px-5 py-4 outline-none font-bold text-textMain placeholder:text-textMuted focus:ring-2 focus:ring-primary/50 transition-all" />
+                 <input required type="password" value={password} onChange={e=>setPassword(e.target.value)} placeholder="Пароль" className="w-full bg-black/5 dark:bg-white/5 rounded-2xl px-5 py-4 outline-none font-bold text-textMain placeholder:text-textMuted focus:ring-2 focus:ring-primary/50 transition-all" />
               </div>
               
-              <button type="submit" className="w-full bg-gradient-to-r from-[#FF8573] to-[#FF9A8B] text-white font-extrabold py-4 rounded-2xl mt-8 active:scale-95 transition-all shadow-[0_8px_20px_rgba(255,154,139,0.4)] hover:opacity-90">
-                 Войти
-              </button>
+              <button type="submit" className="w-full bg-gradient-to-r from-[#FF8573] to-[#FF9A8B] text-white font-extrabold py-4 rounded-2xl mt-8 active:scale-95 transition-all shadow-[0_8px_20px_rgba(255,154,139,0.4)] hover:opacity-90">Войти</button>
            </form>
+        </div>
+      )}
+
+      {appStage === 'loading' && (
+        <div className="absolute inset-0 z-50 flex flex-col items-center justify-center bg-white/40 dark:bg-zinc-900/60 backdrop-blur-3xl animate-in fade-in duration-1000">
+           <div className="relative mb-6">
+              <div className="w-20 h-20 bg-gradient-to-tr from-[#FF8573] to-[#FF9A8B] rounded-3xl flex items-center justify-center shadow-[0_10px_40px_rgba(255,154,139,0.6)] animate-pulse">
+                 <CalendarIcon className="w-10 h-10 text-white" />
+              </div>
+              <div className="absolute -inset-4 border-2 border-primary/30 rounded-[35px] animate-[spin_3s_linear_infinite]"></div>
+           </div>
+           <h1 className="text-2xl font-extrabold text-textMain tracking-tight">Ежедневник</h1>
+           <div className="flex items-center space-x-2 mt-4 text-textMuted">
+              <Loader2 className="w-4 h-4 animate-spin" />
+              <span className="text-sm font-semibold">Синхронизация данных...</span>
+           </div>
         </div>
       )}
 
@@ -603,7 +695,6 @@ export default function App() {
             <button onClick={() => setActiveTab('profile')} className={`flex flex-col items-center space-y-1 w-12 transition-colors ${activeTab === 'profile' ? 'text-primary' : 'text-textMuted hover:text-textMain'}`}>
               <User className="w-6 h-6" /><span className="text-[10px] font-bold">Профиль</span>
             </button>
-            
           </nav>
 
           <main className="flex-1 flex flex-col relative h-[100dvh] md:h-full order-1 md:order-2 overflow-hidden w-full transition-colors">
@@ -633,8 +724,8 @@ export default function App() {
               )}
               {activeTab === 'profile' && <h2 className="text-2xl md:text-3xl font-extrabold text-textMain">Профиль</h2>}
               
-              <button className="p-2 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 rounded-full text-textMain active:scale-95 transition-all">
-                <MoreHorizontal className="w-5 h-5" />
+              <button onClick={() => { localStorage.removeItem('token'); setAppStage('auth'); setUsername(''); setPassword(''); }} className="p-2 bg-black/5 dark:bg-white/5 hover:bg-red-500/20 text-red-500 rounded-full active:scale-95 transition-all">
+                <X className="w-5 h-5" />
               </button>
             </header>
 
@@ -744,7 +835,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* iOS Style Settings Block */}
           <div className="bg-black/5 dark:bg-white/5 rounded-3xl overflow-hidden flex flex-col">
             {sheetState.type === 'event' ? (
               <>
