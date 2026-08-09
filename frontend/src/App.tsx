@@ -57,7 +57,15 @@ declare global {
 }
 
 // --- КОНСТАНТЫ И УТИЛИТЫ ---
-const REAL_TODAY = '2026-08-08';
+const getTodayString = () => {
+  const d = new Date();
+  const yyyy = d.getFullYear();
+  const mm = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return `${yyyy}-${mm}-${dd}`;
+};
+
+
 const COLORS = ['#FF9A8B', '#A7C957', '#3b82f6', '#a855f7', '#E56B6F'];
 const MONTH_NAMES = ['Январь', 'Февраль', 'Март', 'Апрель', 'Май', 'Июнь', 'Июль', 'Август', 'Сентябрь', 'Октябрь', 'Ноябрь', 'Декабрь'];
 
@@ -160,7 +168,22 @@ export default function App() {
   const [username, setUsername] = useState<string>('');
   const [password, setPassword] = useState<string>('');
 
-  const [currentDate, setCurrentDate] = useState<string>(REAL_TODAY);
+  const [currentDate, setCurrentDate] = useState<string>(getTodayString());
+
+  // Обновляем дату, если приложение висело в фоне и наступил новый день
+  useEffect(() => {
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === 'visible') {
+        const trueToday = getTodayString();
+        if (currentDate !== trueToday) {
+          setCurrentDate(trueToday);
+        }
+      }
+    };
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    return () => document.removeEventListener('visibilitychange', handleVisibilityChange);
+  }, [currentDate]);
+
   const [activeTab, setActiveTab] = useState<'today' | 'calendar' | 'tasks' | 'profile'>('today');
   const [isAllDayExpanded, setIsAllDayExpanded] = useState<boolean>(false);
   
@@ -205,11 +228,11 @@ export default function App() {
   // --- КОНЕЦ ДОБАВЛЕННОГО БЛОКА ---
 
   const [expandedTasks, setExpandedTasks] = useState<Record<string, boolean>>({});
-  const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date(REAL_TODAY));
+  const [calendarViewDate, setCalendarViewDate] = useState<Date>(new Date(getTodayString()));
   
   const [sheetState, setSheetState] = useState<{ isOpen: boolean; id: number | null; type: 'event' | 'task' }>({ isOpen: false, id: null, type: 'event' });
   const [formData, setFormData] = useState({
-    title: '', isAllDay: false, startDate: REAL_TODAY, endDate: REAL_TODAY, 
+    title: '', isAllDay: false, startDate: getTodayString(), endDate: getTodayString(), 
     startTime: '09:00', endTime: '10:00', repeat: 'none', color: '#FF9A8B', 
     comments: '', subtasks: [] as Subtask[], isDeadline: false
   });
@@ -232,7 +255,7 @@ export default function App() {
   // Auto-login check
   useEffect(() => {
     const token = localStorage.getItem('token');
-    if (token) {
+    if (token && token.includes('.')) { // <-- Добавлена проверка формата
       try {
         const payload = JSON.parse(atob(token.split('.')[1]));
         setUsername(payload.sub);
@@ -240,6 +263,8 @@ export default function App() {
       } catch (e) {
         localStorage.removeItem('token');
       }
+    } else {
+      localStorage.removeItem('token');
     }
   }, []);
 
@@ -500,7 +525,7 @@ export default function App() {
         },
         body: JSON.stringify({ 
           text: aiText, 
-          current_date: REAL_TODAY 
+          current_date: getTodayString() 
         })
       });
 
@@ -803,7 +828,7 @@ export default function App() {
         <div className="absolute inset-0 bg-white/40 dark:bg-zinc-900/60 backdrop-blur-3xl flex flex-col md:flex-row z-10 animate-in fade-in duration-500">
           
           <nav className="fixed md:relative bottom-0 w-full md:w-24 md:h-full bg-white/70 dark:bg-zinc-900/80 backdrop-blur-2xl border-t md:border-t-0 md:border-r border-black/5 dark:border-white/10 flex md:flex-col justify-between md:justify-start items-center px-6 md:px-0 pb-8 md:pb-6 pt-3 md:pt-[calc(env(safe-area-inset-top,48px)+24px)] z-30 md:space-y-8 flex-shrink-0 order-2 md:order-1 transition-colors">
-            <button onClick={() => { setActiveTab('today'); setCurrentDate(REAL_TODAY); setCalendarViewDate(new Date(REAL_TODAY)); }} className={`flex flex-col items-center space-y-1 w-12 transition-colors ${activeTab === 'today' ? 'text-primary' : 'text-textMuted hover:text-textMain'}`}>
+            <button onClick={() => { setActiveTab('today'); setCurrentDate(getTodayString()); setCalendarViewDate(new Date(getTodayString())); }} className={`flex flex-col items-center space-y-1 w-12 transition-colors ${activeTab === 'today' ? 'text-primary' : 'text-textMuted hover:text-textMain'}`}>
               <Clock className="w-6 h-6" /><span className="text-[10px] font-bold">Сегодня</span>
             </button>
             <button onClick={() => setActiveTab('calendar')} className={`flex flex-col items-center space-y-1 w-12 transition-colors ${activeTab === 'calendar' ? 'text-primary' : 'text-textMuted hover:text-textMain'}`}>
@@ -959,9 +984,9 @@ export default function App() {
           <div>
             <h4 className="text-[11px] font-bold text-textMuted uppercase mb-3 flex items-center tracking-wider ml-1"><CalendarDays className="w-3.5 h-3.5 mr-1.5"/> Быстрый перенос</h4>
             <div className="flex space-x-2">
-              <button onClick={() => setFormData({...formData, startDate: REAL_TODAY, endDate: REAL_TODAY})} className="flex-1 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-textMain text-xs font-bold py-2 rounded-xl transition-colors">Сегодня</button>
-              <button onClick={() => setFormData({...formData, startDate: addDays(REAL_TODAY, 1), endDate: addDays(REAL_TODAY, 1)})} className="flex-1 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-textMain text-xs font-bold py-2 rounded-xl transition-colors">Завтра</button>
-              <button onClick={() => setFormData({...formData, startDate: addDays(REAL_TODAY, 7), endDate: addDays(REAL_TODAY, 7)})} className="flex-1 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-textMain text-xs font-bold py-2 rounded-xl transition-colors">Ч/з неделю</button>
+              <button onClick={() => setFormData({...formData, startDate: getTodayString(), endDate: getTodayString()})} className="flex-1 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-textMain text-xs font-bold py-2 rounded-xl transition-colors">Сегодня</button>
+              <button onClick={() => setFormData({...formData, startDate: addDays(getTodayString(), 1), endDate: addDays(getTodayString(), 1)})} className="flex-1 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-textMain text-xs font-bold py-2 rounded-xl transition-colors">Завтра</button>
+              <button onClick={() => setFormData({...formData, startDate: addDays(getTodayString(), 7), endDate: addDays(getTodayString(), 7)})} className="flex-1 bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-textMain text-xs font-bold py-2 rounded-xl transition-colors">Ч/з неделю</button>
             </div>
           </div>
 
