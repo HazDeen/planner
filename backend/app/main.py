@@ -127,7 +127,7 @@ async def parse_text_with_ai(prompt: AIPrompt, current_user: User = Depends(get_
                 response = await client.post(
                     api_url,
                     json={"contents": [{"parts": [{"text": system_prompt}]}]},
-                    timeout=15.0
+                    timeout=30.0
                 )
                 
                 if response.status_code != 200:
